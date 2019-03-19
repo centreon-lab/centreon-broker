@@ -47,17 +47,13 @@ configure_file(
 #
 
 # Find Qt.
-find_package(Qt4 4.7.4 COMPONENTS QtCore QtNetwork QtSql QtXml REQUIRED)
+find_package(Qt5 COMPONENTS Core Network Sql Xml REQUIRED)
 
 # Find zlib.
 find_package(ZLIB REQUIRED)
 
 include(${QT_USE_FILE})
 set(QT_VERSION "${QT_VERSION_MAJOR}.${QT_VERSION_MINOR}.${QT_VERSION_PATCH}")
-if (("${QT_VERSION}" VERSION_EQUAL "4.7.0")
-    OR ("${QT_VERSION}" VERSION_EQUAL "4.7.1"))
-  message(WARNING "Qt versions 4.7.0 and 4.7.1 contain a bug that might prevent Centreon Broker from working properly.")
-endif ()
 
 #
 # Get distributions name
@@ -300,7 +296,7 @@ configure_file(
 #
 
 # Some files must be processed by Qt's moc.
-qt4_wrap_cpp(QT_WRAPPED_SOURCES
+qt5_wrap_cpp(QT_WRAPPED_SOURCES
   "${INC_DIR}/logging/backend.hh"
   "${INC_DIR}/logging/manager.hh"
   "${INC_DIR}/processing/thread.hh"
