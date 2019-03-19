@@ -30,6 +30,13 @@ set(INC_DIR "${PROJECT_SOURCE_DIR}/core/inc/com/centreon/broker")
 set(SRC_DIR "${PROJECT_SOURCE_DIR}/core/src")
 set(TEST_DIR "${PROJECT_SOURCE_DIR}/core/test")
 
+# Find includes in corresponding build directories
+set(CMAKE_INCLUDE_CURRENT_DIR ON)
+# Instruct CMake to run moc automatically when needed
+set(CMAKE_AUTOMOC ON)
+# Create code from a list of Qt designer ui files
+set(CMAKE_AUTOUIC ON)
+
 # Version.
 set(CENTREON_BROKER_MAJOR 19)
 set(CENTREON_BROKER_MINOR 04)
@@ -48,7 +55,6 @@ configure_file(
 
 # Find Qt.
 find_package(Qt5 COMPONENTS Core Network Sql Xml REQUIRED)
-target_link_libraries(Qt5::Core Qt5::Network Qt5::Sql Qt5::Xml)
 
 # Find zlib.
 find_package(ZLIB REQUIRED)
@@ -610,10 +616,11 @@ add_executable("${DAEMON}"
   # Sources.
   "${SRC_DIR}/main.cc"
 )
+
 if (CMAKE_COMPILER_IS_GNUCXX)
   # Flags needed to include all symbols in binary.
   target_link_libraries("${DAEMON}"
-    "-Wl,--whole-archive" "rokerbase" "roker" "-Wl,--no-whole-archive")
+    "-Wl,--whole-archive" "rokerbase" "roker" "-Wl,--no-whole-archive" Qt5::Core Qt5::Network Qt5::Sql Qt5::Xml)
 else ()
   target_link_libraries("${DAEMON}" "roker")
 endif ()
