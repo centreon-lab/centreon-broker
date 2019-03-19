@@ -48,6 +48,7 @@ configure_file(
 
 # Find Qt.
 find_package(Qt5 COMPONENTS Core Network Sql Xml REQUIRED)
+target_link_libraries(Qt5::Core Qt5::Network Qt5::Sql Qt5::Xml)
 
 # Find zlib.
 find_package(ZLIB REQUIRED)
