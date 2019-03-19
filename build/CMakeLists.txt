@@ -52,7 +52,6 @@ find_package(Qt5 COMPONENTS Core Network Sql Xml REQUIRED)
 # Find zlib.
 find_package(ZLIB REQUIRED)
 
-include(${QT_USE_FILE})
 set(QT_VERSION "${QT_VERSION_MAJOR}.${QT_VERSION_MINOR}.${QT_VERSION_PATCH}")
 
 #
