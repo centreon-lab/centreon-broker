@@ -622,7 +622,7 @@ if (CMAKE_COMPILER_IS_GNUCXX)
   target_link_libraries("${DAEMON}"
     "-Wl,--whole-archive" "rokerbase" "roker" "-Wl,--no-whole-archive" Qt5::Core Qt5::Network Qt5::Sql Qt5::Xml)
 else ()
-  target_link_libraries("${DAEMON}" "roker")
+  target_link_libraries("${DAEMON}" "roker" Qt5::Core Qt5::Network Qt5::Sql Qt5::Xml)
 endif ()
 
 # Centreon Broker Watchdog
