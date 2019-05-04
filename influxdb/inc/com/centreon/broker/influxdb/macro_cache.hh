@@ -20,12 +20,11 @@
 #  define CCB_INFLUXDB_MACRO_CACHE_HH
 
 #  include <map>
+#  include <memory>
 #  include <string>
 #  include <QHash>
-#  include "com/centreon/broker/instance_broadcast.hh"
 #  include "com/centreon/broker/io/factory.hh"
 #  include "com/centreon/broker/namespace.hh"
-#  include "com/centreon/broker/misc/shared_ptr.hh"
 #  include "com/centreon/broker/persistent_cache.hh"
 #  include "com/centreon/broker/neb/instance.hh"
 #  include "com/centreon/broker/neb/host.hh"
@@ -41,10 +40,10 @@ namespace         influxdb {
    */
   class            macro_cache {
   public:
-                   macro_cache(misc::shared_ptr<persistent_cache> const& cache);
+                   macro_cache(std::shared_ptr<persistent_cache> const& cache);
                    ~macro_cache();
 
-    void           write(misc::shared_ptr<io::data> const& data);
+    void           write(std::shared_ptr<io::data> const& data);
 
     storage::index_mapping const&
                    get_index_mapping(unsigned int index_id) const;
@@ -60,16 +59,16 @@ namespace         influxdb {
                    macro_cache(macro_cache const& f);
     macro_cache&   operator=(macro_cache const& f);
 
-    void           _process_instance(instance_broadcast const& in);
+    void           _process_instance(neb::instance const& in);
     void           _process_host(neb::host const& h);
     void           _process_service(neb::service const& s);
     void           _process_index_mapping(storage::index_mapping const& im);
     void           _process_metric_mapping(storage::metric_mapping const& mm);
     void           _save_to_disk();
 
-    misc::shared_ptr<persistent_cache>
+    std::shared_ptr<persistent_cache>
                    _cache;
-    QHash<unsigned int, instance_broadcast>
+    QHash<unsigned int, neb::instance>
                    _instances;
     QHash<unsigned int, neb::host>
                    _hosts;

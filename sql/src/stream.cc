@@ -48,7 +48,7 @@ using namespace com::centreon::broker::sql;
 **************************************/
 
 // Processing tables.
-void (stream::* const stream::_correlation_processing_table[])(misc::shared_ptr<io::data> const&) = {
+void (stream::* const stream::_correlation_processing_table[])(std::shared_ptr<io::data> const&) = {
   NULL,
   &stream::_process_engine,
   &stream::_process_issue,
@@ -56,7 +56,7 @@ void (stream::* const stream::_correlation_processing_table[])(misc::shared_ptr<
   &stream::_process_state,
   &stream::_process_log_issue
 };
-void (stream::* const stream::_neb_processing_table[])(misc::shared_ptr<io::data> const&) = {
+void (stream::* const stream::_neb_processing_table[])(std::shared_ptr<io::data> const&) = {
   NULL,
   &stream::_process_acknowledgement,
   &stream::_process_comment,
@@ -121,7 +121,64 @@ void stream::_cache_create() {
       << "SQL: could not get list of deleted instances: "
       << e.what();
   }
-  return ;
+}
+
+/**
+ * Create the cache to link host ids to instance ids.
+ */
+void stream::_cache_instance_host_create() {
+  _cache_instance_host.clear();
+  std::ostringstream oss;
+  oss << "SELECT instance_id, host_id"
+      << " FROM " << ((_db.schema_version() == database::v2)
+                      ? "hosts"
+                      : "rt_hosts");
+  try {
+    database_query q(_db);
+    q.run_query(oss.str());
+    while (q.next())
+      _cache_instance_host.insert(
+        std::make_pair(q.value(0).toUInt(), q.value(1).toUInt()));
+  }
+  catch (std::exception const& e) {
+    logging::error(logging::high)
+      << "SQL: could not get list of instances/hosts relations: "
+      << e.what();
+  }
+}
+
+/**
+ *  Remove instances / hosts relations from cache and dependent commands
+ *  from _cache_svc_cmd and _cache_hst_cmd.
+ *
+ *  @param instance_id The instance id to work with.
+ */
+void stream::_cache_instance_host_clean(unsigned int instance_id) {
+  std::pair<std::multimap<unsigned int, unsigned int>::iterator,
+            std::multimap<unsigned int, unsigned int>::iterator>
+    range(_cache_instance_host.equal_range(instance_id));
+
+  for (std::multimap<unsigned int, unsigned int>::iterator
+         it(range.first),
+         end(range.second);
+       it != end;
+       ++it) {
+    // Let's remove service commands associated with host_id it->second
+    for (std::map<std::pair<unsigned int, unsigned int>, unsigned int>::iterator
+           sit(_cache_svc_cmd.begin()),
+           send(_cache_svc_cmd.end());
+         sit != send ; ) {
+      if (sit->first.first == it->second)
+        _cache_svc_cmd.erase(sit++);
+      else
+        ++sit;
+    }
+
+    // Let's remove the host command.
+    _cache_hst_cmd.erase(it->second);
+  }
+  // Let's remove instance_id / host_id association.
+  _cache_instance_host.erase(instance_id);
 }
 
 /**
@@ -137,7 +194,6 @@ void stream::_clean_empty_host_groups() {
   }
   _empty_host_groups_delete.run_statement(
     "SQL: could not remove empty host groups");
-  return ;
 }
 
 /**
@@ -153,7 +209,6 @@ void stream::_clean_empty_service_groups() {
   }
   _empty_service_groups_delete.run_statement(
     "SQL: could not remove empty service groups");
-  return ;
 }
 
 /**
@@ -461,10 +516,10 @@ void stream::_prepare_select(
  *  @param[in] e Uncasted acknowledgement.
  */
 void stream::_process_acknowledgement(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Cast object.
   neb::acknowledgement const&
-    ack(*static_cast<neb::acknowledgement const*>(e.data()));
+    ack(*static_cast<neb::acknowledgement const*>(e.get()));
 
   // Log message.
   logging::info(logging::medium)
@@ -528,9 +583,9 @@ void stream::_process_acknowledgement(
  *
  *  @param[in] e  Uncasted comment.
  */
-void stream::_process_comment(misc::shared_ptr<io::data> const& e) {
+void stream::_process_comment(std::shared_ptr<io::data> const& e) {
   // Cast object.
-  neb::comment const& cmmnt(e.ref_as<neb::comment const>());
+  neb::comment const& cmmnt(*std::static_pointer_cast<neb::comment const>(e));
 
   // Prepare queries.
   if (!_comment_insert.prepared() || !_comment_update.prepared()) {
@@ -569,10 +624,10 @@ void stream::_process_comment(misc::shared_ptr<io::data> const& e) {
  *  @param[in] e Uncasted custom variable.
  */
 void stream::_process_custom_variable(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Cast object.
   neb::custom_variable const&
-    cv(*static_cast<neb::custom_variable const*>(e.data()));
+    cv(*static_cast<neb::custom_variable const*>(e.get()));
 
   // Prepare queries.
   if (!_custom_variable_insert.prepared()
@@ -634,10 +689,10 @@ void stream::_process_custom_variable(
  *  @param[in] e Uncasted custom variable status.
  */
 void stream::_process_custom_variable_status(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Cast object.
   neb::custom_variable_status const&
-    cvs(*static_cast<neb::custom_variable_status const*>(e.data()));
+    cvs(*static_cast<neb::custom_variable_status const*>(e.get()));
 
   // Log message.
   logging::info(logging::medium)
@@ -682,10 +737,10 @@ void stream::_process_custom_variable_status(
  *  @param[in] e Uncasted downtime.
  */
 void stream::_process_downtime(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Cast object.
   neb::downtime const&
-    d(*static_cast<neb::downtime const*>(e.data()));
+    d(*static_cast<neb::downtime const*>(e.get()));
 
   // Log message.
   logging::info(logging::medium)
@@ -773,14 +828,14 @@ void stream::_process_downtime(
  *  @param[in] e Uncasted correlation engine event.
  */
 void stream::_process_engine(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Log message.
   logging::info(logging::medium)
     << "SQL: processing correlation engine event";
 
   // Cast event.
   correlation::engine_state const&
-    es(*static_cast<correlation::engine_state const*>(e.data()));
+    es(*static_cast<correlation::engine_state const*>(e.get()));
 
   // Database schema version.
   bool db_v2(_db.schema_version() == database::v2);
@@ -807,8 +862,6 @@ void stream::_process_engine(
       q.run_query(ss.str());
     }
   }
-
-  return ;
 }
 
 /**
@@ -817,10 +870,10 @@ void stream::_process_engine(
  *  @param[in] e Uncasted event handler.
  */
 void stream::_process_event_handler(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Cast object.
   neb::event_handler const&
-    eh(*static_cast<neb::event_handler const*>(e.data()));
+    eh(*static_cast<neb::event_handler const*>(e.get()));
 
   // Log message.
   logging::info(logging::medium)
@@ -865,10 +918,10 @@ void stream::_process_event_handler(
  *  @param[in] e Uncasted flapping status.
  */
 void stream::_process_flapping_status(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Cast object.
   neb::flapping_status const&
-    fs(*static_cast<neb::flapping_status const*>(e.data()));
+    fs(*static_cast<neb::flapping_status const*>(e.get()));
 
   // Log message.
   logging::info(logging::medium)
@@ -913,9 +966,9 @@ void stream::_process_flapping_status(
  *  @param[in] e Uncasted host.
  */
 void stream::_process_host(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Cast object.
-  neb::host const& h(*static_cast<neb::host const*>(e.data()));
+  neb::host const& h(*static_cast<neb::host const*>(e.get()));
 
   // Log message.
   logging::info(logging::medium) << "SQL: processing host event"
@@ -933,6 +986,9 @@ void stream::_process_host(
         dbp.prepare_insert(_host_insert);
         dbp.prepare_update(_host_update);
       }
+
+      if (!h.enabled)
+        _cache_hst_cmd.erase(h.host_id);
 
       // Process object.
       try {
@@ -958,10 +1014,10 @@ void stream::_process_host(
  *  @param[in] e Uncasted host check.
  */
 void stream::_process_host_check(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Cast object.
   neb::host_check const&
-    hc(*static_cast<neb::host_check const*>(e.data()));
+    hc(*static_cast<neb::host_check const*>(e.get()));
 
   time_t now(time(NULL));
   if (hc.check_type                // - passive result
@@ -975,28 +1031,62 @@ void stream::_process_host_check(
       << "SQL: processing host check event (host: " << hc.host_id
       << ", command: " << hc.command_line << ")";
 
-    // Prepare queries.
-    if (!_host_check_update.prepared()) {
-      database_preparator::event_unique unique;
-      unique.insert("host_id");
-      database_preparator dbp(neb::host_check::static_type(), unique);
-      dbp.prepare_update(_host_check_update);
+    // Processing.
+    // Compute the command hash
+    bool execute_query(true);
+    unsigned int str_hash(qHash(hc.command_line));
+    std::map<unsigned int, unsigned int>::iterator it(
+      _cache_hst_cmd.find(hc.host_id));
+
+    if (it != _cache_hst_cmd.end()) {
+      // The command is already stored. Has it changed?
+      if (it->second != str_hash) {
+        logging::debug(logging::low)
+          << "SQL: host check command (host: " << hc.host_id
+          << ", command: " << hc.command_line << ") changed - database updated";
+        it->second = str_hash;
+      }
+      else {
+        logging::debug(logging::low)
+          << "SQL: host check command (host: " << hc.host_id
+          << ", command: " << hc.command_line << ") did not change";
+        execute_query = false;
+      }
+    }
+    else {
+      logging::debug(logging::low)
+        << "SQL: host check command (host: " << hc.host_id
+        << ", command: " << hc.command_line
+        << ") not stored - insert it into database";
+      _cache_hst_cmd.insert(std::make_pair(hc.host_id, str_hash));
     }
 
-    // Processing.
-    _host_check_update << hc;
-    try {
-      _host_check_update.run_statement();
+    if (execute_query) {
+      // Prepare queries.
+      if (!_host_check_update.prepared()) {
+        database_preparator::event_unique unique;
+        unique.insert("host_id");
+        database_preparator dbp(neb::host_check::static_type(), unique);
+        dbp.prepare_update(_host_check_update);
+      }
+
+      _host_check_update << hc;
+      try {
+        _host_check_update.run_statement();
+      }
+      catch (std::exception const& e) {
+        _cache_hst_cmd.erase(hc.host_id);
+        throw (exceptions::msg()
+               << "SQL: could not store host check (host: " << hc.host_id
+               << "): " << e.what());
+      }
+      if (_host_check_update.num_rows_affected() != 1) {
+        _cache_hst_cmd.erase(hc.host_id);
+        logging::error(logging::medium) << "SQL: host check could not "
+             "be updated because host " << hc.host_id
+          << " was not found in database";
+      }
     }
-    catch (std::exception const& e) {
-      throw (exceptions::msg()
-             << "SQL: could not store host check (host: " << hc.host_id
-             << "): " << e.what());
-    }
-    if (_host_check_update.num_rows_affected() != 1)
-      logging::error(logging::medium) << "SQL: host check could not "
-           "be updated because host " << hc.host_id
-        << " was not found in database";
   }
   else
     // Do nothing.
@@ -1005,8 +1095,6 @@ void stream::_process_host_check(
       << ", command: " << hc.command_line << ", check type: "
       << hc.check_type << ", next check: " << hc.next_check << ", now: "
       << now << ")";
-
-  return ;
 }
 
 /**
@@ -1015,10 +1103,10 @@ void stream::_process_host_check(
  *  @param[in] e Uncasted host dependency.
  */
 void stream::_process_host_dependency(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Cast object.
   neb::host_dependency const&
-    hd(*static_cast<neb::host_dependency const*>(e.data()));
+    hd(*static_cast<neb::host_dependency const*>(e.get()));
 
   // Insert/Update.
   if (hd.enabled) {
@@ -1078,10 +1166,10 @@ void stream::_process_host_dependency(
  *  @param[in] e Uncasted host group.
  */
 void stream::_process_host_group(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Cast object.
   neb::host_group const&
-    hg(*static_cast<neb::host_group const*>(e.data()));
+    hg(*static_cast<neb::host_group const*>(e.get()));
 
   // Only process groups for v2 schema.
   if (_db.schema_version() != database::v2)
@@ -1136,8 +1224,6 @@ void stream::_process_host_group(
     // Delete empty group.
     _clean_empty_host_groups();
   }
-
-  return ;
 }
 
 /**
@@ -1146,10 +1232,10 @@ void stream::_process_host_group(
  *  @param[in] e Uncasted host group member.
  */
 void stream::_process_host_group_member(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Cast object.
   neb::host_group_member const&
-    hgm(*static_cast<neb::host_group_member const*>(e.data()));
+    hgm(*static_cast<neb::host_group_member const*>(e.get()));
 
   // Only process groups for v2 schema.
   if (_db.schema_version() != database::v2)
@@ -1182,7 +1268,7 @@ void stream::_process_host_group_member(
       }
       // The insertion error could be caused by a missing group.
       catch (std::exception const& e) {
-        misc::shared_ptr<neb::host_group> hg(new neb::host_group);
+        std::shared_ptr<neb::host_group> hg(new neb::host_group);
         hg->id = hgm.group_id;
         hg->name = hgm.group_name;
         hg->enabled = true;
@@ -1236,10 +1322,10 @@ void stream::_process_host_group_member(
  *  @param[in] e Uncasted host parent.
  */
 void stream::_process_host_parent(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Log message.
   neb::host_parent const&
-    hp(*static_cast<neb::host_parent const*>(e.data()));
+    hp(*static_cast<neb::host_parent const*>(e.get()));
 
   // Enable parenting.
   if (hp.enabled) {
@@ -1303,10 +1389,10 @@ void stream::_process_host_parent(
  *  @param[in] e Uncasted host state.
  */
 void stream::_process_host_state(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Log message.
   correlation::state const&
-    s(*static_cast<correlation::state const*>(e.data()));
+    s(*static_cast<correlation::state const*>(e.get()));
   logging::info(logging::medium)
     << "SQL: processing host state event (host: " << s.host_id
     << ", state: " << s.current_state << ", start time: "
@@ -1367,10 +1453,10 @@ void stream::_process_host_state(
  *  @param[in] e Uncasted host status.
  */
 void stream::_process_host_status(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Processed object.
   neb::host_status const&
-    hs(*static_cast<neb::host_status const*>(e.data()));
+    hs(*static_cast<neb::host_status const*>(e.get()));
 
   time_t now(time(NULL));
   if (hs.check_type                // - passive result
@@ -1426,9 +1512,9 @@ void stream::_process_host_status(
  *  @param[in] e Uncasted instance.
  */
 void stream::_process_instance(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Cast object.
-  neb::instance const& i(*static_cast<neb::instance const*>(e.data()));
+  neb::instance const& i(*static_cast<neb::instance const*>(e.get()));
 
   // Log message.
   logging::info(logging::medium) << "SQL: processing poller event "
@@ -1437,6 +1523,9 @@ void stream::_process_instance(
 
   // Clean tables.
   _clean_tables(i.poller_id);
+
+  // Clean host/service commands caches
+  _cache_instance_host_clean(i.poller_id);
 
   // Processing.
   if (_is_valid_poller(i.poller_id)) {
@@ -1469,7 +1558,7 @@ void stream::_process_instance(
  *  @param[in] e  Uncasted instance configuration.
  */
 void stream::_process_instance_configuration(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Nothing to do.
   (void)e;
   return ;
@@ -1481,10 +1570,10 @@ void stream::_process_instance_configuration(
  *  @param[in] e Uncasted instance status.
  */
 void stream::_process_instance_status(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Cast object.
   neb::instance_status const&
-    is(*static_cast<neb::instance_status const*>(e.data()));
+    is(*static_cast<neb::instance_status const*>(e.get()));
 
   // Log message.
   logging::info(logging::medium)
@@ -1527,10 +1616,10 @@ void stream::_process_instance_status(
  *  @param[in] e Uncasted issue.
  */
 void stream::_process_issue(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Issue object.
   correlation::issue const&
-    i(*static_cast<correlation::issue const*>(e.data()));
+    i(*static_cast<correlation::issue const*>(e.get()));
 
   // Log message.
   logging::info(logging::medium)
@@ -1571,10 +1660,10 @@ void stream::_process_issue(
  *  @param[in] e Uncasted issue parent.
  */
 void stream::_process_issue_parent(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Issue parent object.
   correlation::issue_parent const&
-    ip(*static_cast<correlation::issue_parent const*>(e.data()));
+    ip(*static_cast<correlation::issue_parent const*>(e.get()));
 
   // Log message.
   logging::info(logging::medium) << "SQL: processing issue parent "
@@ -1727,10 +1816,10 @@ void stream::_process_issue_parent(
  *  @param[in] e Uncasted log.
  */
 void stream::_process_log(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Fetch proper structure.
   neb::log_entry const& le(
-    *static_cast<neb::log_entry const*>(e.data()));
+    *static_cast<neb::log_entry const*>(e.get()));
 
   // Log message.
   logging::info(logging::medium) << "SQL: processing log of poller '"
@@ -1756,9 +1845,9 @@ void stream::_process_log(
  *  @param[in] e Uncasted module.
  */
 void stream::_process_module(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Cast object.
-  neb::module const& m(*static_cast<neb::module const*>(e.data()));
+  neb::module const& m(*static_cast<neb::module const*>(e.get()));
 
   // Log message.
   logging::info(logging::medium)
@@ -1811,7 +1900,7 @@ void stream::_process_module(
  *  @param[in] e Uncasted notification.
  */
 void stream::_process_notification(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // XXX
   // // Log message.
   // logging::info(logging::medium)
@@ -1821,7 +1910,7 @@ void stream::_process_notification(
   // _update_on_none_insert(
   //   _notification_insert,
   //   _notification_update,
-  //   *static_cast<neb::notification const*>(e.data()));
+  //   *static_cast<neb::notification const*>(e.get()));
 
   return ;
 }
@@ -1832,9 +1921,9 @@ void stream::_process_notification(
  *  @param[in] e Uncasted service.
  */
 void stream::_process_service(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Processed object.
-  neb::service const& s(*static_cast<neb::service const*>(e.data()));
+  neb::service const& s(*static_cast<neb::service const*>(e.get()));
 
   // Log message.
   logging::info(logging::medium) << "SQL: processing service event "
@@ -1852,6 +1941,9 @@ void stream::_process_service(
       dbp.prepare_insert(_service_insert);
       dbp.prepare_update(_service_update);
     }
+
+    if (!s.enabled)
+      _cache_svc_cmd.erase(std::make_pair(s.host_id, s.service_id));
 
     // Process object.
     try {
@@ -1879,10 +1971,10 @@ void stream::_process_service(
  *  @param[in] e Uncasted service check.
  */
 void stream::_process_service_check(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Cast object.
   neb::service_check const&
-    sc(*static_cast<neb::service_check const*>(e.data()));
+    sc(*static_cast<neb::service_check const*>(e.get()));
 
   time_t now(time(NULL));
   if (sc.check_type                // - passive result
@@ -1897,30 +1989,68 @@ void stream::_process_service_check(
       << ", service: " << sc.service_id << ", command: "
       << sc.command_line << ")";
 
-    // Prepare queries.
-    if (!_service_check_update.prepared()) {
-      database_preparator::event_unique unique;
-      unique.insert("host_id");
-      unique.insert("service_id");
-      database_preparator dbp(neb::service_check::static_type(), unique);
-      dbp.prepare_update(_service_check_update);
+    // Processing.
+    // Compute the command hash
+    bool execute_query(true);
+    unsigned int str_hash(qHash(sc.command_line));
+    std::map<std::pair<unsigned int, unsigned int>, unsigned int>::iterator it(
+      _cache_svc_cmd.find(std::make_pair(sc.host_id, sc.service_id)));
+
+    if (it != _cache_svc_cmd.end()) {
+      // The command is already stored. Has it changed?
+      if (it->second != str_hash) {
+        logging::debug(logging::low)
+          << "SQL: service check command (host: " << sc.host_id
+          << ", service: " << sc.service_id
+          << ", command: " << sc.command_line << ") changed - database updated";
+        it->second = str_hash;
+      }
+      else {
+        logging::debug(logging::low)
+          << "SQL: service check command (host: " << sc.host_id
+          << ", service: " << sc.service_id
+          << ", command: " << sc.command_line << ") did not change";
+        execute_query = false;
+      }
+    }
+    else {
+      logging::debug(logging::low)
+        << "SQL: service check command (host: " << sc.host_id
+        << ", service: " << sc.service_id
+        << ", command: " << sc.command_line
+        << ") not stored - insert it into database";
+      _cache_svc_cmd.insert(
+        std::make_pair(std::make_pair(sc.host_id, sc.service_id), str_hash));
     }
 
-    // Processing.
-    _service_check_update << sc;
-    try {
-      _service_check_update.run_statement();
+    if (execute_query) {
+      // Prepare queries.
+      if (!_service_check_update.prepared()) {
+        database_preparator::event_unique unique;
+        unique.insert("host_id");
+        unique.insert("service_id");
+        database_preparator dbp(neb::service_check::static_type(), unique);
+        dbp.prepare_update(_service_check_update);
+      }
+
+      _service_check_update << sc;
+      try {
+        _service_check_update.run_statement();
+      }
+      catch (std::exception const& e) {
+        _cache_svc_cmd.erase(std::make_pair(sc.host_id, sc.service_id));
+        throw (exceptions::msg()
+               << "SQL: could not store service check (host: "
+               << sc.host_id << ", service: " << sc.service_id << "): "
+               << e.what());
+      }
+      if (_service_check_update.num_rows_affected() != 1) {
+        logging::error(logging::medium) << "SQL: service check could "
+             "not be updated because service (" << sc.host_id << ", "
+          << sc.service_id << ") was not found in database";
+        _cache_svc_cmd.erase(std::make_pair(sc.host_id, sc.service_id));
+      }
     }
-    catch (std::exception const& e) {
-      throw (exceptions::msg()
-             << "SQL: could not store service check (host: "
-             << sc.host_id << ", service: " << sc.service_id << "): "
-             << e.what());
-    }
-    if (_service_check_update.num_rows_affected() != 1)
-      logging::error(logging::medium) << "SQL: service check could "
-           "not be updated because service (" << sc.host_id << ", "
-        << sc.service_id << ") was not found in database";
   }
   else
     // Do nothing.
@@ -1929,8 +2059,6 @@ void stream::_process_service_check(
       << ", service: " << sc.service_id << ", command: "
       << sc.command_line << ", check_type: " << sc.check_type
       << ", next_check: " << sc.next_check << ", now: " << now << ")";
-
-  return ;
 }
 
 /**
@@ -1939,10 +2067,10 @@ void stream::_process_service_check(
  *  @param[in] e Uncasted service dependency.
  */
 void stream::_process_service_dependency(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Cast object.
   neb::service_dependency const&
-    sd(*static_cast<neb::service_dependency const*>(e.data()));
+    sd(*static_cast<neb::service_dependency const*>(e.get()));
 
   // Insert/Update.
   if (sd.enabled) {
@@ -2010,10 +2138,10 @@ void stream::_process_service_dependency(
  *  @param[in] e Uncasted service group.
  */
 void stream::_process_service_group(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Cast object.
   neb::service_group const&
-    sg(*static_cast<neb::service_group const*>(e.data()));
+    sg(*static_cast<neb::service_group const*>(e.get()));
 
   // Only process groups for v2 schema.
   if (_db.schema_version() != database::v2)
@@ -2078,10 +2206,10 @@ void stream::_process_service_group(
  *  @param[in] e Uncasted service group member.
  */
 void stream::_process_service_group_member(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Cast object.
   neb::service_group_member const&
-    sgm(*static_cast<neb::service_group_member const*>(e.data()));
+    sgm(*static_cast<neb::service_group_member const*>(e.get()));
 
   // Only process groups for v2 schema.
   if (_db.schema_version() != database::v2)
@@ -2115,7 +2243,7 @@ void stream::_process_service_group_member(
       }
       // The insertion error could be caused by a missing group.
       catch (std::exception const& e) {
-        misc::shared_ptr<neb::service_group> sg(new neb::service_group);
+        std::shared_ptr<neb::service_group> sg(new neb::service_group);
         sg->id = sgm.group_id;
         sg->name = sgm.group_name;
         sg->enabled = true;
@@ -2172,10 +2300,10 @@ void stream::_process_service_group_member(
  *  @param[in] e Uncasted service state.
  */
 void stream::_process_service_state(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Log message.
   correlation::state const&
-    s(*static_cast<correlation::state const*>(e.data()));
+    s(*static_cast<correlation::state const*>(e.get()));
   logging::info(logging::medium)
     << "SQL: processing service state event (host: " << s.host_id
     << ", service: " << s.service_id << ", state: " << s.current_state
@@ -2212,8 +2340,6 @@ void stream::_process_service_state(
              << ", start time: " << s.start_time << "): " << e.what());
     }
   }
-
-  return ;
 }
 
 /**
@@ -2221,8 +2347,8 @@ void stream::_process_service_state(
  *
  *  @param[in] e  Uncasted state.
  */
-void stream::_process_state(misc::shared_ptr<io::data> const& e) {
-  if (e.ref_as<correlation::state const>().service_id == 0)
+void stream::_process_state(std::shared_ptr<io::data> const& e) {
+  if (std::static_pointer_cast<correlation::state const>(e)->service_id == 0)
     _process_host_state(e);
   else
     _process_service_state(e);
@@ -2233,7 +2359,7 @@ void stream::_process_state(misc::shared_ptr<io::data> const& e) {
  *
  *  @param[in] e  Uncasted log issue.
  */
-void stream::_process_log_issue(misc::shared_ptr<io::data> const& e) {
+void stream::_process_log_issue(std::shared_ptr<io::data> const& e) {
   // XXX : TODO
   (void) e;
 }
@@ -2244,10 +2370,10 @@ void stream::_process_log_issue(misc::shared_ptr<io::data> const& e) {
  *  @param[in] e Uncasted service status.
  */
 void stream::_process_service_status(
-               misc::shared_ptr<io::data> const& e) {
+               std::shared_ptr<io::data> const& e) {
   // Processed object.
   neb::service_status const&
-    ss(*static_cast<neb::service_status const*>(e.data()));
+    ss(*static_cast<neb::service_status const*>(e.get()));
 
   time_t now(time(NULL));
   if (ss.check_type                // - passive result
@@ -2299,12 +2425,10 @@ void stream::_process_service_status(
       << ss.last_check << ", next_check: " << ss.next_check << ", now: "
       << now << ", state (" << ss.current_state << ", "
       << ss.state_type << "))";
-
-  return ;
 }
 
 void stream::_process_responsive_instance(
-               misc::shared_ptr<io::data> const& e) {}
+               std::shared_ptr<io::data> const& e) {}
 
 template <typename T>
 void stream::_update_on_none_insert(
@@ -2320,8 +2444,6 @@ void stream::_update_on_none_insert(
     ins << t;
     ins.run_statement();
   }
-
-  return ;
 }
 
 /**
@@ -2372,7 +2494,6 @@ void stream::_get_all_outdated_instances_from_db() {
     ts = stored_timestamp(instance_id, stored_timestamp::unresponsive);
     ts.set_timestamp(timestamp(std::numeric_limits<time_t>::max()));
   }
-  return ;
 }
 
 /**
@@ -2460,7 +2581,7 @@ void stream::_update_hosts_and_services_of_instance(
        << "  WHERE h.instance_id=" << id;
     q.run_query(ss.str(), "SQL: could not outdate instance");
   }
-  misc::shared_ptr<neb::responsive_instance> ri(new neb::responsive_instance);
+  std::shared_ptr<neb::responsive_instance> ri(new neb::responsive_instance);
   ri->poller_id = id;
   ri->responsive = responsive;
   multiplexing::publisher().write(ri);
@@ -2597,9 +2718,9 @@ int stream::flush() {
  *
  *  @return This method will throw.
  */
-bool stream::read(misc::shared_ptr<io::data>& d, time_t deadline) {
+bool stream::read(std::shared_ptr<io::data>& d, time_t deadline) {
   (void)deadline;
-  d.clear();
+  d.reset();
   throw (exceptions::shutdown() << "cannot read from SQL database");
   return (true);
 }
@@ -2610,7 +2731,7 @@ bool stream::read(misc::shared_ptr<io::data>& d, time_t deadline) {
 void stream::update() {
   _cache_clean();
   _cache_create();
-  return ;
+  _cache_instance_host_create();
 }
 
 /**
@@ -2620,11 +2741,11 @@ void stream::update() {
  *
  *  @return Number of events acknowledged.
  */
-int stream::write(misc::shared_ptr<io::data> const& data) {
+int stream::write(std::shared_ptr<io::data> const& data) {
   // Take this event into account.
   ++_pending_events;
   if (!validate(data, "SQL"))
-    return (0);
+    return 0;
 
   // Process event.
   unsigned int type(data->type());
@@ -2645,8 +2766,8 @@ int stream::write(misc::shared_ptr<io::data> const& data) {
     _db.clear_committed_flag();
     int retval(_pending_events);
     _pending_events = 0;
-    return (retval);
+    return retval;
   }
   else
-    return (0);
+    return 0;
 }

@@ -29,6 +29,7 @@
 #include "com/centreon/broker/bam/bool_operation.hh"
 #include "com/centreon/broker/bam/bool_or.hh"
 #include "com/centreon/broker/bam/bool_service.hh"
+#include "com/centreon/broker/bam/bool_xor.hh"
 #include "com/centreon/broker/bam/exp_builder.hh"
 #include "com/centreon/broker/bam/exp_parser.hh"
 #include "com/centreon/broker/exceptions/msg.hh"
@@ -63,7 +64,7 @@ exp_builder::exp_builder(
       }
       else if (*it == "!") {
         bool_value::ptr arg(_pop_operand());
-        any_operand exp(new bool_not(arg), "");
+        any_operand exp(std::make_shared<bool_not>(arg), "");
         arg->add_parent(exp.first);
         _operands.push(exp);
       }
@@ -71,27 +72,29 @@ exp_builder::exp_builder(
       else {
         bool_binary_operator::ptr binary;
         if ((*it == "&&") || (*it == "AND"))
-          binary = new bool_and();
+          binary.reset(new bool_and());
         else if ((*it == "||") || (*it == "OR"))
-          binary = new bool_or();
+          binary.reset(new bool_or());
+        else if ((*it == "^") || (*it == "XOR"))
+          binary.reset(new bool_xor());
         else if ((*it == "==") || (*it == "IS"))
-          binary = new bool_equal();
+          binary.reset(new bool_equal());
         else if ((*it == "!=") || (*it == "NOT"))
-          binary = new bool_not_equal();
+          binary.reset(new bool_not_equal());
         else if (*it == ">")
-          binary = new bool_more_than(true);
+          binary.reset(new bool_more_than(true));
         else if (*it == ">=")
-          binary = new bool_more_than(false);
+          binary.reset(new bool_more_than(false));
         else if (*it == "<")
-          binary = new bool_less_than(true);
+          binary.reset(new bool_less_than(true));
         else if (*it == "<=")
-          binary = new bool_less_than(false);
+          binary.reset(new bool_less_than(false));
         else if ((*it == "+")
                  || (*it == "-")
                  || (*it == "*")
                  || (*it == "/")
                  || (*it == "%"))
-          binary = new bool_operation(*it);
+          binary.reset(new bool_operation(*it));
         else
           throw (exceptions::msg() << "unsupported operator "
                  << *it << " found while parsing expression");
@@ -183,9 +186,6 @@ exp_builder::exp_builder(
         throw (exceptions::msg() << "internal expression parsing "
                << "error: no arity placed after function name in "
                << "postfix notation");
-      int arity(std::strtol(it->c_str(), NULL, 0));
-
-      // XXX
     }
     // Operand (will be evaluated when poped).
     else {
@@ -290,7 +290,7 @@ bool_value::ptr exp_builder::_pop_operand() {
 
   // Check if operand needs to be converted.
   bool_value::ptr retval;
-  if (_operands.top().first.isNull()) {
+  if (!_operands.top().first) {
     std::string value_str(_operands.top().second);
     double value;
     if (value_str == "OK")
@@ -309,7 +309,7 @@ bool_value::ptr exp_builder::_pop_operand() {
       value = 2;
     else
       value = std::strtod(value_str.c_str(), NULL);
-    retval = new bool_constant(value);
+    retval.reset(new bool_constant(value));
   }
   else
     retval = _operands.top().first;
@@ -333,7 +333,7 @@ std::string exp_builder::_pop_string() {
            << "operator or function");
 
   // Check that operand is a string.
-  if (!_operands.top().first.isNull()
+  if (_operands.top().first
       || _operands.top().second.empty())
     throw (exceptions::msg()
            << "syntax error: operand was expected to be a string");
